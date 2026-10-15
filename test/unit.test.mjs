@@ -109,3 +109,24 @@ test("edge cases: narrow lines, IR-only, big input, sig figs, bad rows", () => {
   assert.match(parseSpectrum("380,5,1\n400,1\n780,1").notes.join(" "), /more than 2 columns/);
   assert.throws(() => chroma({ X: 1, Y: 1 }), /all three/);
 });
+
+test("round 3: more CIE illuminants, SI prefixes R/Q, clearer errors", async () => {
+  const { daylight, FL } = await import("../src/cie.js");
+  const near = (a, b, t) => assert.ok(Math.abs(a - b) <= t, `${a} vs ${b}`);
+  // CIE 015:2018 Table 10/11 chromaticities
+  for (const [T, x, y] of [[5000, 0.34567, 0.3585], [5500, 0.33242, 0.34743], [7500, 0.29902, 0.31485]]) {
+    const d = daylight((T * 1.4388) / 1.438);
+    const c = spectrumAnalysis({ spectrum: { wavelengths: d.wl, values: d.val }, fidelityIndices: false }).chromaticity;
+    near(c.x, x, 2e-5); near(c.y, y, 2e-5); assert.ok(c.duv > 0, "daylight sits above the Planckian locus");
+  }
+  const f12 = spectrumAnalysis({ spectrum: { wavelengths: FL.wl, values: FL.cols[11] } });
+  near(f12.chromaticity.x, 0.43695, 2e-5); near(f12.chromaticity.cct, 3000, 10);
+  near(f12.colorRendition.Rf, 77, 1.5); near(f12.colorRendition.Rg, 102, 1.5);
+  assert.equal(formatSI({ value: 1e30, unit: "W" }).text, "1 QW");
+  assert.equal(formatSI({ value: 2e-28, unit: "W" }).text, "200 qW");
+  assert.match(formatSI({ value: 1e40, unit: "W" }).text, /e\+40 W$/);
+  assert.equal(convert({ quantity: "intensity_to_illuminance", value: 1000, distanceM: 2, angleDeg: 60 }).value, 125);
+  assert.throws(() => convert({ quantity: "illuminance", value: 1, from: "lm", to: "lx" }), /lumens_to_illuminance/);
+  assert.throws(() => convert({ quantity: "illuminance_to_luminance", value: 500, reflectance: 80 }), /use 0.8/);
+  assert.throws(() => convert({ quantity: "luminance", value: 1, from: "lx", to: "nit" }), /illuminance_to_luminance/);
+});

@@ -11,18 +11,19 @@ const req = (v, f) => { if (v == null || v === "") throw new Error(`${f} is requ
 // Solid angle of a cone with full apex angle theta (degrees).
 export const coneSr = (fullAngleDeg) => { const a = req(fullAngleDeg, "beamAngleDeg"); if (a <= 0 || a > 360) throw new Error("beamAngleDeg must be above 0 and at most 360."); return 2 * Math.PI * (1 - Math.cos(((a / 2) * Math.PI) / 180)); };
 
-export function convert({ quantity, value, from, to, distanceM, beamAngleDeg, areaM2, reflectance, angleDeg = 0 } = {}) {
+export function convert(args = {}) { const r = convertRaw(args); if (typeof r.value === "number") r.value = Number(r.value.toPrecision(12)); return r; }
+function convertRaw({ quantity, value, from, to, distanceM, beamAngleDeg, areaM2, reflectance, angleDeg = 0 } = {}) {
   const v = req(value, "value");
   const k = String(quantity || "").toLowerCase();
   const u = (s) => String(s || "").toLowerCase().replace(/[^a-z²2/]/g, "");
   if (k === "illuminance") {
     const f = { lx: 1, lux: 1, fc: LUX_PER_FC, footcandle: LUX_PER_FC, footcandles: LUX_PER_FC };
-    if (!f[u(from)] || !f[u(to)]) throw new Error("illuminance units: lx or fc.");
+    if (!f[u(from)] || !f[u(to)]) throw new Error(/^(lm|lumens?)$/.test(u(from)) || /^(lm|lumens?)$/.test(u(to)) ? "Lumens measure total flux, not illuminance. Use quantity lumens_to_illuminance with areaM2 (lux = lm/m²)." : "illuminance units: lx or fc.");
     return { value: (v * f[u(from)]) / f[u(to)], unit: u(to) === "fc" || u(to).startsWith("foot") ? "fc" : "lx" };
   }
   if (k === "luminance") {
     const f = { nit: 1, nits: 1, cdm2: 1, "cd/m2": 1, "cd/m²": 1, fl: NIT_PER_FL, footlambert: NIT_PER_FL, footlamberts: NIT_PER_FL };
-    if (!f[u(from)] || !f[u(to)]) throw new Error("luminance units: cd/m2 (nit) or fL.");
+    if (!f[u(from)] || !f[u(to)]) throw new Error(/^(lx|lux|fc|cd)$/.test(u(from)) || /^(lx|lux|fc|cd)$/.test(u(to)) ? "luminance units: cd/m2 (nit) or fL. Lux is illuminance and cd is intensity; for lux to cd/m2 use quantity illuminance_to_luminance with a reflectance." : "luminance units: cd/m2 (nit) or fL.");
     return { value: (v * f[u(from)]) / f[u(to)], unit: f[u(to)] === 1 ? "cd/m²" : "fL" };
   }
   if (k === "intensity_to_illuminance") {
@@ -44,7 +45,7 @@ export function convert({ quantity, value, from, to, distanceM, beamAngleDeg, ar
     return { value: v / A, unit: "lx", formula: "E = Φ/A (flux spread evenly)" };
   }
   if (k === "illuminance_to_luminance" || k === "luminance_to_illuminance") {
-    const r = req(reflectance, "reflectance"); if (r <= 0 || r > 1) throw new Error("reflectance must be above 0 and at most 1.");
+    const r = req(reflectance, "reflectance"); if (r <= 0 || r > 1) throw new Error(r > 1 && r <= 100 ? `reflectance is a fraction from 0 to 1; if you meant ${r}%, use ${r / 100}.` : "reflectance must be above 0 and at most 1.");
     return k === "illuminance_to_luminance" ? { value: (r * v) / Math.PI, unit: "cd/m²", formula: "L = ρ·E/π (Lambertian surface)" } : { value: (Math.PI * v) / r, unit: "lx", formula: "E = π·L/ρ (Lambertian surface)" };
   }
   throw new Error("quantity must be one of: illuminance, luminance, intensity_to_illuminance, illuminance_to_intensity, lumens_to_candela, candela_to_lumens, lumens_to_illuminance, illuminance_to_luminance, luminance_to_illuminance.");
@@ -170,8 +171,8 @@ export function chroma(input = {}) {
   return r;
 }
 
-const PREFIX = [[1e24, "Y"], [1e21, "Z"], [1e18, "E"], [1e15, "P"], [1e12, "T"], [1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""], [1e-3, "m"], [1e-6, "µ"], [1e-9, "n"], [1e-12, "p"], [1e-15, "f"], [1e-18, "a"], [1e-21, "z"], [1e-24, "y"]];
-const BASE = new Set(["m", "W", "lm", "lx", "cd", "Hz", "s", "J", "V", "A", "Ω", "g", "sr", "W/m²", "W/sr", "cd/m²", "lm/W", "W/(m²·sr)"]);
+const PREFIX = [[1e30, "Q"], [1e27, "R"], [1e24, "Y"], [1e21, "Z"], [1e18, "E"], [1e15, "P"], [1e12, "T"], [1e9, "G"], [1e6, "M"], [1e3, "k"], [1, ""], [1e-3, "m"], [1e-6, "µ"], [1e-9, "n"], [1e-12, "p"], [1e-15, "f"], [1e-18, "a"], [1e-21, "z"], [1e-24, "y"], [1e-27, "r"], [1e-30, "q"]];
+const BASE = new Set(["m", "W", "lm", "lx", "cd", "Hz", "s", "J", "V", "A", "Ω", "g", "W/m²", "W/sr", "cd/m²", "lm/W", "W/(m²·sr)"]);
 const NO_SPACE = new Set(["°", "′", "″"]); // SI Brochure 5.4.3: plane-angle degree, minute, second take no space
 
 // SI style: number, a space, the unit (no space only for the angle symbols ° ′ ″). Prefixes in steps of 1000.
@@ -188,10 +189,11 @@ export function formatSI({ value, unit = "", sigFigs = 3, prefix = true } = {}) 
     if (idx < 0) idx = PREFIX.length - 1;
     // rounding can push 999.96 up to 1000: move to the next prefix
     if (idx > 0 && Math.abs(Number((v / PREFIX[idx][0]).toPrecision(s))) >= 1000) idx--;
+    if (idx === 0 && Math.abs(Number((v / PREFIX[0][0]).toPrecision(s))) >= 1000) idx = base; // above quetta: plain exponent
   }
   if (idx === PREFIX.length - 1 && Math.abs(v / PREFIX[idx][0]) < 1) idx = base; // below yocto: plain exponent
   const num = Number((v / PREFIX[idx][0]).toPrecision(s));
-  const str = Math.abs(num) >= 1e21 || (Math.abs(num) < 1e-6 && num !== 0) ? num.toExponential(s - 1) : String(num);
+  const str = Math.abs(num) >= 1e6 || (Math.abs(num) < 1e-6 && num !== 0) ? num.toExponential(s - 1) : String(num);
   const u = `${PREFIX[idx][1]}${unit}`;
   return { text: !unit ? str : NO_SPACE.has(unit) ? `${str}${u}` : `${str} ${u}`, value: num, unit: u };
 }
