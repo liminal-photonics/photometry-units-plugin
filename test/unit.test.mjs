@@ -90,3 +90,22 @@ test("SI formatting", () => {
   assert.equal(formatSI({ value: 0, unit: "lx" }).text, "0 lx");
   assert.throws(() => formatSI({ value: "abc" }), /finite/);
 });
+
+test("edge cases: narrow lines, IR-only, big input, sig figs, bad rows", () => {
+  // 0.3 nm wide line at 550.5 nm sampled at 0.1 nm: must not vanish between whole nanometers
+  const w = [], v = []; for (let i = 0; i <= 200; i++) { const x = 540 + i / 10; w.push(+x.toFixed(1)); v.push(Math.abs(x - 550.5) < 0.15 ? 1 : 0); }
+  const r = spectrumAnalysis({ spectrum: { wavelengths: w, values: v }, fidelityIndices: false });
+  near(r.photometric.value / r.radiometric.value, 683.002 * 0.9950, 683 * 0.01, "550.5 nm line efficacy");
+  // IR LED: radiometric total, 0 lx, no color point, no crash
+  const ir = spectrumAnalysis({ spectrum: "900,0\n940,1\n980,0" });
+  near(ir.radiometric.value, 40, 1e-9, "IR W/m2"); assert.equal(ir.photometric.value, 0); assert.ok(ir.chromaticity.error);
+  assert.throws(() => spectrumAnalysis({ spectrum: "900,0\n940,1\n980,0", scaleTo: { quantity: "photometric", value: 10 } }), /no visible power/);
+  // 190k points used to overflow the call stack
+  const big = [...Array(190000)].map((_, i) => 380 + i / 475);
+  assert.ok(parseSpectrum({ wavelengths: big, values: big.map(() => 1) }).points === 190000);
+  assert.throws(() => parseSpectrum({ wavelengths: [...Array(200001)].map((_, i) => i), values: [] }), /too many points/);
+  // a data row that cannot be read is an error, not a silently skipped header
+  assert.throws(() => parseSpectrum("380;1.234,5\n400;1\n500;1\n780;1"), /Could not read line/);
+  assert.match(parseSpectrum("380,5,1\n400,1\n780,1").notes.join(" "), /more than 2 columns/);
+  assert.throws(() => chroma({ X: 1, Y: 1 }), /all three/);
+});

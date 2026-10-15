@@ -52,14 +52,19 @@ export function convert({ quantity, value, from, to, distanceM, beamAngleDeg, ar
 
 // Spectrum CSV: two columns (wavelength, value). Accepts headers, comma/semicolon/tab/space, decimal commas with
 // semicolon separators, and wavelengths in nm or µm (from the header, or when every wavelength is below 10).
+const MAX_POINTS = 200_000;
 export function parseSpectrum(input) {
-  if (input && typeof input === "object" && Array.isArray(input.wavelengths)) return cleanSpectrum(input.wavelengths.map(Number), (input.values || []).map(Number), "nm");
+  if (input && typeof input === "object" && Array.isArray(input.wavelengths)) {
+    if (input.wavelengths.length > MAX_POINTS) throw new Error(`spectrum has too many points (${MAX_POINTS} max).`);
+    return cleanSpectrum(input.wavelengths.map(Number), (input.values || []).map(Number), "nm");
+  }
   const text = String(input ?? "").replace(/^\uFEFF/, "");
   if (!text.trim()) throw new Error("spectrum is empty. Give CSV text with wavelength and value columns.");
   if (text.length > 2_000_000) throw new Error("spectrum is too large (2 MB max).");
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   let unit = "nm";
   const wl = [], val = [];
+  let extraCols = false;
   for (const l of lines) {
     const semi = l.includes(";") || l.includes("\t");
     let parts = semi ? l.split(/[;\t]/) : l.split(/[,\s]+/);
@@ -67,18 +72,23 @@ export function parseSpectrum(input) {
     parts = parts.map((p) => p.trim()).filter(Boolean);
     const a = Number(parts[0]), b = Number(parts[1]);
     if (!Number.isFinite(a) || !Number.isFinite(b)) {
-      if (!wl.length) { if (/µm|um|micro/i.test(l)) unit = "um"; continue; } // header
+      // header: only a line with letters before any data. A number we cannot read is an error, not a header.
+      if (!wl.length && /[a-zµ]/i.test(l) && !Number.isFinite(a)) { if (/µm|um|micro/i.test(l)) unit = "um"; continue; }
       throw new Error(`Could not read line "${l.slice(0, 60)}" as wavelength,value.`);
     }
+    if (parts.length > 2) extraCols = true;
     wl.push(a); val.push(b);
   }
-  return cleanSpectrum(wl, val, unit);
+  if (wl.length > MAX_POINTS) throw new Error(`spectrum has too many points (${MAX_POINTS} max).`);
+  const sp = cleanSpectrum(wl, val, unit);
+  if (extraCols) sp.notes.push("Some lines had more than 2 columns; only the first two (wavelength, value) were used. If your file uses decimal commas, separate columns with semicolons or tabs.");
+  return sp;
 }
 
 function cleanSpectrum(wl, val, unit) {
   if (wl.length < 3 || wl.length !== val.length) throw new Error("A spectrum needs at least 3 wavelength,value pairs of equal length.");
   if (wl.some((x) => !Number.isFinite(x)) || val.some((x) => !Number.isFinite(x))) throw new Error("Spectrum contains non-numeric values.");
-  if (unit === "um" || Math.max(...wl) < 10) wl = wl.map((w) => w * 1000);
+  if (unit === "um" || wl.reduce((m, x) => (x > m ? x : m), -Infinity) < 10) wl = wl.map((w) => w * 1000);
   const idx = wl.map((_, i) => i).sort((a, b) => wl[a] - wl[b]);
   const W = idx.map((i) => wl[i]), S = idx.map((i) => val[i]);
   for (let i = 1; i < W.length; i++) if (W[i] === W[i - 1]) throw new Error(`Duplicate wavelength ${W[i]} nm.`);
@@ -93,7 +103,7 @@ const ABS = { irradiance: { unit: "W/m²/nm", out: "illuminance", outUnit: "lx" 
 export function spectrumAnalysis({ spectrum, kind = "irradiance", scaleTo, fidelityIndices = true } = {}) {
   const sp = parseSpectrum(spectrum);
   const kd = ABS[kind]; if (!kd) throw new Error("kind must be irradiance, radiance, flux or intensity.");
-  const spd = resample(sp.wl, sp.val, 360, 830, 1);
+  const spd = toGrid(sp);
   let rad = 0; for (let i = 1; i < sp.wl.length; i++) rad += ((sp.val[i] + sp.val[i - 1]) / 2) * (sp.wl[i] - sp.wl[i - 1]); // trapezoid over the given range
   let vint = 0; for (const [w, s] of spd) vint += s * (V.get(w) || 0);
   let phot = KM * vint;
@@ -105,24 +115,46 @@ export function spectrumAnalysis({ spectrum, kind = "irradiance", scaleTo, fidel
     if (scaleTo.quantity === "radiometric") factor = t / rad; else if (scaleTo.quantity === "photometric") factor = t / phot; else throw new Error("scaleTo.quantity must be radiometric or photometric.");
   }
   const xyz = tristimulus(spd, "2");
-  const xy = xyFromXYZ(xyz);
+  let chromaticity;
+  if (!(phot > 0) || !(xyz.X + xyz.Y + xyz.Z > 0)) chromaticity = { error: "No visible power (360-830 nm), so there is no color point." };
+  else { try { chromaticity = chroma(xyFromXYZ(xyz)); } catch (e) { chromaticity = { error: e.message }; } }
+  if (scaleTo?.quantity === "photometric" && !(phot > 0)) throw new Error("Cannot scale to a photometric total: the spectrum has no visible power (360-830 nm). Use scaleTo.quantity radiometric.");
   const out = {
     points: sp.points, rangeNm: sp.range,
     radiometric: { value: rad * factor, unit: kd.unit.replace("/nm", "").replace("·nm", "") },
     photometric: { quantity: kd.out, value: phot * factor, unit: kd.outUnit },
     luminousEfficacyOfRadiation: { value: phot / rad, unit: "lm/W" },
-    chromaticity: chroma({ x: xy.x, y: xy.y }),
+    chromaticity,
     notes: [...sp.notes, scaleTo ? `Spectrum scaled by ${factor.toPrecision(6)} to match the given ${scaleTo.quantity} total.` : "Values use the spectrum's own absolute scale; give scaleTo to match a measured total."],
     method: `Km = ${KM} lm/W with CIE 1924 V(λ) at 1 nm; chromaticity with CIE 1931 2° CMFs.`,
   };
-  if (fidelityIndices) {
+  if (fidelityIndices && phot > 0) {
     try { out.colorRendition = fidelity(spd); } catch (e) { out.colorRendition = { error: e.message }; }
+  }
+  return out;
+}
+
+// Spectrum onto the 1 nm grid used by the CIE tables. Data at 1 nm or coarser: linear interpolation (as CIE 015).
+// Finer data: average over each 1 nm bin, so narrow lines between whole nanometers are not lost.
+export function toGrid(sp) {
+  let minStep = Infinity; for (let i = 1; i < sp.wl.length; i++) minStep = Math.min(minStep, sp.wl[i] - sp.wl[i - 1]);
+  if (minStep >= 1) return resample(sp.wl, sp.val, 360, 830, 1);
+  const { wl, val } = sp, out = new Map();
+  const at = (x, j) => val[j] + ((x - wl[j]) / (wl[j + 1] - wl[j])) * (val[j + 1] - val[j]);
+  for (let w = 360; w <= 830; w++) out.set(w, 0);
+  for (let j = 0; j < wl.length - 1; j++) {
+    const a = wl[j], b = wl[j + 1];
+    for (let w = Math.max(360, Math.round(a)); w <= Math.min(830, Math.round(b)); w++) {
+      const lo = Math.max(a, w - 0.5), hi = Math.min(b, w + 0.5);
+      if (hi > lo) out.set(w, out.get(w) + ((at(lo, j) + at(hi, j)) / 2) * (hi - lo));
+    }
   }
   return out;
 }
 
 export function chroma(input = {}) {
   let xy;
+  if (input.X != null && ![input.X, input.Y, input.Z].every((q) => q !== "" && q != null && Number.isFinite(Number(q)))) throw new Error("Give all three of X, Y and Z as numbers.");
   if (input.X != null) xy = xyFromXYZ({ X: Number(input.X), Y: Number(input.Y), Z: Number(input.Z) });
   else if (input.x != null) xy = { x: Number(input.x), y: Number(input.y) };
   else if (input.u != null) xy = xyFromUvPrime({ u: Number(input.u), v: Number(input.v) });

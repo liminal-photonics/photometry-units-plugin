@@ -2,7 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { convert, spectrumAnalysis, chroma, formatSI, parseSpectrum } from "./units.js";
+import { convert, spectrumAnalysis, chroma, formatSI, parseSpectrum, toGrid } from "./units.js";
 import { resample } from "./cie.js";
 import { fidelity } from "./fidelity.js";
 
@@ -25,7 +25,7 @@ const H = {
   photometric_convert: convert,
   spectrum_analyze: spectrumAnalysis,
   chromaticity: chroma,
-  color_rendition: (a) => { const s = parseSpectrum(a.spectrum); return { ...fidelity(resample(s.wl, s.val, 360, 830, 1)), notes: s.notes }; },
+  color_rendition: (a) => { const s = parseSpectrum(a.spectrum); return { ...fidelity(toGrid(s)), notes: s.notes }; },
   format_si: formatSI,
 };
 
