@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "photometry-units": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "github:liminal-photonics/photometry-units-plugin"]
+    }
+  }
+}

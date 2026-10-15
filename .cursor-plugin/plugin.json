@@ -1,0 +1,16 @@
+{
+  "name": "photometry-units",
+  "displayName": "Photometry & Color Units",
+  "version": "0.1.0",
+  "description": "Correct lighting math from public CIE data: lux, foot-candles, lumens, candela and nits with stated geometry; irradiance to illuminance from a spectrum (V(λ), 683.002 lm/W); CIE 1931 xy, u'v', CCT and Duv with a refusal when |Duv| > 0.05; CIE 224 / TM-30 Rf and Rg; spectrum CSV parsing; SI formatting like '550 nm'. Checked against CIE reference values. No keys, runs offline.",
+  "author": { "name": "Liminal Photonics" },
+  "homepage": "https://github.com/liminal-photonics/photometry-units-plugin",
+  "repository": "https://github.com/liminal-photonics/photometry-units-plugin",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": ["photometry", "lighting", "lux", "lumens", "candela", "cct", "duv", "tm-30", "cie", "colorimetry", "spectrum", "mcp"],
+  "category": "developer-tools",
+  "tags": ["lighting", "optics", "color", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json"
+}
