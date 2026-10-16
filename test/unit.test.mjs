@@ -106,7 +106,7 @@ test("edge cases: narrow lines, IR-only, big input, sig figs, bad rows", () => {
   assert.throws(() => parseSpectrum({ wavelengths: [...Array(200001)].map((_, i) => i), values: [] }), /too many points/);
   // a data row that cannot be read is an error, not a silently skipped header
   assert.throws(() => parseSpectrum("380;1.234,5\n400;1\n500;1\n780;1"), /Could not read line/);
-  assert.match(parseSpectrum("380,5,1\n400,1\n780,1").notes.join(" "), /more than 2 columns/);
+  assert.throws(() => parseSpectrum("380,5,1\n400,1\n780,1"), /valueColumn/); // round 4: extra columns are refused, not silently dropped
   assert.throws(() => chroma({ X: 1, Y: 1 }), /all three/);
 });
 

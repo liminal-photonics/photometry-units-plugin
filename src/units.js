@@ -18,7 +18,7 @@ function convertRaw({ quantity, value, from, to, distanceM, beamAngleDeg, areaM2
   const u = (s) => String(s || "").toLowerCase().replace(/[^a-z²2/]/g, "");
   if (k === "illuminance") {
     const f = { lx: 1, lux: 1, fc: LUX_PER_FC, footcandle: LUX_PER_FC, footcandles: LUX_PER_FC };
-    if (!f[u(from)] || !f[u(to)]) throw new Error(/^(lm|lumens?)$/.test(u(from)) || /^(lm|lumens?)$/.test(u(to)) ? "Lumens measure total flux, not illuminance. Use quantity lumens_to_illuminance with areaM2 (lux = lm/m²)." : "illuminance units: lx or fc.");
+    if (!f[u(from)] || !f[u(to)]) throw new Error(/^(lm|lumens?)$/.test(u(from)) || /^(lm|lumens?)$/.test(u(to)) ? "Lumens measure total flux, not illuminance. Use quantity lumens_to_illuminance with areaM2 (lux = lm/m²)." : `illuminance units: lx (lux) or fc (foot-candles)${/^k/i.test(String(from || ""))+/^k/i.test(String(to || "")) ? ". Prefixed units like klx are not accepted: convert to lx first (1 klx = 1000 lx), and use format_si to show a result as klx" : ""}.`);
     return { value: (v * f[u(from)]) / f[u(to)], unit: u(to) === "fc" || u(to).startsWith("foot") ? "fc" : "lx" };
   }
   if (k === "luminance") {
@@ -54,7 +54,9 @@ function convertRaw({ quantity, value, from, to, distanceM, beamAngleDeg, areaM2
 // Spectrum CSV: two columns (wavelength, value). Accepts headers, comma/semicolon/tab/space, decimal commas with
 // semicolon separators, and wavelengths in nm or µm (from the header, or when every wavelength is below 10).
 const MAX_POINTS = 200_000;
-export function parseSpectrum(input) {
+export function parseSpectrum(input, valueColumn) {
+  if (valueColumn != null && (!Number.isInteger(valueColumn) || valueColumn < 2)) throw new Error("valueColumn must be a whole number of 2 or more (column 1 is the wavelength).");
+  const vc = (valueColumn ?? 2) - 1;
   if (input && typeof input === "object" && Array.isArray(input.wavelengths)) {
     if (input.wavelengths.length > MAX_POINTS) throw new Error(`spectrum has too many points (${MAX_POINTS} max).`);
     return cleanSpectrum(input.wavelengths.map(Number), (input.values || []).map(Number), "nm");
@@ -71,7 +73,9 @@ export function parseSpectrum(input) {
     let parts = semi ? l.split(/[;\t]/) : l.split(/[,\s]+/);
     if (semi) parts = parts.map((p) => p.replace(",", "."));
     parts = parts.map((p) => p.trim()).filter(Boolean);
-    const a = Number(parts[0]), b = Number(parts[1]);
+    const a = Number(parts[0]), b = Number(parts[vc]);
+    if (Number.isFinite(a) && parts.length > vc && parts.length > 2 && valueColumn == null) throw new Error(`Line "${l.slice(0, 60)}" has ${parts.length} columns. Say which column holds the spectral values with valueColumn (column 1 is the wavelength, e.g. valueColumn: 2). If the file uses decimal commas, separate columns with semicolons or tabs.`);
+    if (Number.isFinite(a) && parts.length <= vc) throw new Error(`Line "${l.slice(0, 60)}" has no column ${vc + 1} (valueColumn).`);
     if (!Number.isFinite(a) || !Number.isFinite(b)) {
       // header: only a line with letters before any data. A number we cannot read is an error, not a header.
       if (!wl.length && /[a-zµ]/i.test(l) && !Number.isFinite(a)) { if (/µm|um|micro/i.test(l)) unit = "um"; continue; }
@@ -82,7 +86,7 @@ export function parseSpectrum(input) {
   }
   if (wl.length > MAX_POINTS) throw new Error(`spectrum has too many points (${MAX_POINTS} max).`);
   const sp = cleanSpectrum(wl, val, unit);
-  if (extraCols) sp.notes.push("Some lines had more than 2 columns; only the first two (wavelength, value) were used. If your file uses decimal commas, separate columns with semicolons or tabs.");
+  if (extraCols) sp.notes.push(`Values taken from column ${vc + 1} (valueColumn).`);
   return sp;
 }
 
@@ -95,14 +99,16 @@ function cleanSpectrum(wl, val, unit) {
   for (let i = 1; i < W.length; i++) if (W[i] === W[i - 1]) throw new Error(`Duplicate wavelength ${W[i]} nm.`);
   const notes = [];
   if (S.some((v) => v < 0)) notes.push("Negative values (detector noise?) were kept as given.");
+  let maxStep = 0; for (let i = 1; i < W.length; i++) maxStep = Math.max(maxStep, W[i] - W[i - 1]);
+  if (maxStep > 5 + 1e-9) notes.push(`Coarse sampling: some points are ${+maxStep.toFixed(3)} nm apart. CIE 015 and CIE 224 call for 5 nm or finer; values between points are linearly interpolated, so xy, CCT and especially Rf/Rg are approximate. Use 1-5 nm data for reportable results.`);
   if (W[0] > 380 || W[W.length - 1] < 780) notes.push(`Spectrum covers ${W[0]}-${W[W.length - 1]} nm; anything outside is treated as zero. Rf/Rg need 380-780 nm.`);
   return { wl: W, val: S, notes, range: [W[0], W[W.length - 1]], points: W.length };
 }
 
 const ABS = { irradiance: { unit: "W/m²/nm", out: "illuminance", outUnit: "lx" }, radiance: { unit: "W/(m²·sr·nm)", out: "luminance", outUnit: "cd/m²" }, flux: { unit: "W/nm", out: "luminous flux", outUnit: "lm" }, intensity: { unit: "W/(sr·nm)", out: "luminous intensity", outUnit: "cd" } };
 
-export function spectrumAnalysis({ spectrum, kind = "irradiance", scaleTo, fidelityIndices = true } = {}) {
-  const sp = parseSpectrum(spectrum);
+export function spectrumAnalysis({ spectrum, kind = "irradiance", scaleTo, fidelityIndices = true, valueColumn } = {}) {
+  const sp = parseSpectrum(spectrum, valueColumn);
   const kd = ABS[kind]; if (!kd) throw new Error("kind must be irradiance, radiance, flux or intensity.");
   const spd = toGrid(sp);
   let rad = 0; for (let i = 1; i < sp.wl.length; i++) rad += ((sp.val[i] + sp.val[i - 1]) / 2) * (sp.wl[i] - sp.wl[i - 1]); // trapezoid over the given range
@@ -180,7 +186,10 @@ const NO_SPACE = new Set(["°", "′", "″"]); // SI Brochure 5.4.3: plane-angl
 export function formatSI({ value, unit = "", sigFigs = 3, prefix = true } = {}) {
   const v = Number(value);
   if (!Number.isFinite(v)) throw new Error("value must be a finite number.");
-  const s = Math.max(1, Math.min(15, Math.floor(Number(sigFigs) || 3)));
+  if (sigFigs != null && !(Number.isInteger(Number(sigFigs)) && Number(sigFigs) >= 1 && Number(sigFigs) <= 15)) throw new Error("sigFigs must be a whole number from 1 to 15.");
+  const s = sigFigs == null ? 3 : Number(sigFigs);
+  if (unit != null && typeof unit !== "string") throw new Error('unit must be text, e.g. "lm" or "W/m²".');
+  if (String(unit ?? "").length > 40) throw new Error("unit is too long (40 characters max).");
   unit = String(unit || "").trim();
   const base = PREFIX.findIndex(([f]) => f === 1);
   let idx = base;
