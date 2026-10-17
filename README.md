@@ -11,6 +11,7 @@ An MCP server and skill for lighting math done correctly, using only public CIE 
 | `chromaticity` | xy ↔ u′v′ ↔ CIE 1960 uv (from xy, u′v′ or XYZ), CCT and Duv. **CCT is refused when \|Duv\| > 0.05.** |
 | `color_rendition` | CIE 224:2017 colour fidelity index Rf (identical to ANSI/IES TM-30-18/-20 Rf), TM-30 gamut index Rg and 16 hue-bin Rf values. |
 | `format_si` | SI style output: `5.5e-7 m` → `550 nm`, `1234 lm` → `1.23 klm`, a space before the unit (none before °). |
+| `photometry_status` | Plugin version, git commit and the CIE data tables in use. |
 
 Spectrum input is CSV text (`wavelength,value` per line; header, BOM, `#` comments, tab, semicolon and decimal-comma files accepted; wavelengths in nm, or µm when the header says so or all values are below 10) or `{ wavelengths, values }`. Data is linearly interpolated to 1 nm; anything outside the given range counts as zero, with a note.
 
@@ -28,6 +29,12 @@ Offline tests check: D65 and illuminant A chromaticity against CIE 015:2018 (wit
 ## Data and license
 
 Code: MIT © Liminal Photonics. CIE data in `data/` is CC BY-SA 4.0 from the CIE; see `data/README.md` for sources and citations.
+
+## Reliability fields (v0.2.0)
+
+- Every tool result carries `retrievedAt` (UTC, ISO 8601) and `plugin: { name, version, gitSha }`, so a saved result can be dated and traced to the exact build. Array results are wrapped as `{ result: [...] }`.
+- `photometry_status` (new tool) reports `pluginName`, `version`, `gitSha` and `gitShaSource` (the npm lockfile that installed the plugin, `PLUGIN_GIT_SHA`, or the git checkout).
+- Pin installs to a release tag (`#v0.2.0`) or a commit SHA, not the default branch, so an update can't change answers without notice. The tag is created on the merge commit; until it exists, pin the merge commit SHA.
 
 ## Development
 

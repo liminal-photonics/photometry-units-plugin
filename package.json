@@ -1,6 +1,6 @@
 {
   "name": "photometry-units-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for photometric unit conversions, spectrum photometry and colorimetry from public CIE data.",
   "type": "module",
   "bin": { "photometry-units-mcp": "src/index.js" },
