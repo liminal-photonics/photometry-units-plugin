@@ -3,7 +3,7 @@
     "photometry-units": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "github:liminal-photonics/photometry-units-plugin"]
+      "args": ["-y", "github:liminal-photonics/photometry-units-plugin#v0.2.0"]
     }
   }
 }

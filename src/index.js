@@ -5,6 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { convert, spectrumAnalysis, chroma, formatSI, parseSpectrum, toGrid } from "./units.js";
 import { resample } from "./cie.js";
 import { fidelity } from "./fidelity.js";
+import { pluginVersion, stamp, versionInfo } from "./version.js";
 
 const spectrumProp = { description: "Spectrum as CSV text (wavelength,value per line; header optional; nm or µm) or { wavelengths: [...], values: [...] }.", anyOf: [{ type: "string" }, { type: "object", properties: { wavelengths: { type: "array", items: { type: "number" } }, values: { type: "array", items: { type: "number" } } } }] };
 
@@ -19,6 +20,8 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { spectrum: spectrumProp, valueColumn: { type: "integer", minimum: 2, description: "CSV only: which column holds the values when there are more than 2 (column 1 is the wavelength)." } }, required: ["spectrum"] } },
   { name: "format_si", description: "Format a value in SI style with a space before the unit and an SI prefix, e.g. 5.5e-7 m -> '550 nm', 1234 lm -> '1.23 klm'.",
     inputSchema: { type: "object", properties: { value: { type: "number" }, unit: { type: "string" }, sigFigs: { type: "integer", minimum: 1, maximum: 15, default: 3 }, prefix: { type: "boolean", default: true } }, required: ["value"] } },
+  { name: "photometry_status", description: "Show the plugin version, the git commit that is running, and the CIE data tables it uses.",
+    inputSchema: { type: "object", properties: {} } },
 ];
 
 const H = {
@@ -27,15 +30,16 @@ const H = {
   chromaticity: chroma,
   color_rendition: (a) => { const s = parseSpectrum(a.spectrum, a.valueColumn); return { ...fidelity(toGrid(s)), notes: s.notes }; },
   format_si: formatSI,
+  photometry_status: () => ({ ...versionInfo(), data: "CIE tables bundled in data/ (sources and versions in data/README.md); no network access needed" }),
 };
 
-const server = new Server({ name: "photometry-units", version: "0.1.0" }, { capabilities: { tools: {} } });
+const server = new Server({ name: "photometry-units", version: pluginVersion().version || "0.0.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: a = {} } = req.params;
   try {
     if (!H[name]) throw new Error(`Unknown tool ${name}`);
-    return { content: [{ type: "text", text: JSON.stringify(await H[name](a || {}), null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify(stamp(await H[name](a || {})), null, 2) }] };
   } catch (e) {
     return { isError: true, content: [{ type: "text", text: e.message }] };
   }
